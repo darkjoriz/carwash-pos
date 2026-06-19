@@ -1,0 +1,97 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap");
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* CSS variables are injected at runtime from config/branding.ts
+   via the <BrandStyle/> component, so re-skinning needs no rebuild. */
+:root {
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Subtle automotive grid backdrop */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(900px 500px at 80% -10%, color-mix(in srgb, var(--primary) 9%, transparent), transparent 60%),
+    linear-gradient(transparent 0, var(--bg) 70%),
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--border) 35%, transparent) 0 1px, transparent 1px 44px),
+    repeating-linear-gradient(0deg, color-mix(in srgb, var(--border) 35%, transparent) 0 1px, transparent 1px 44px);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+@layer components {
+  .panel {
+    @apply bg-surface border border-border rounded-xl2 shadow-panel;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5
+           text-sm font-medium transition-all duration-150 select-none
+           focus:outline-none focus-visible:ring-2 focus-visible:ring-primary;
+  }
+  .btn-primary {
+    @apply btn bg-primary text-primaryText hover:brightness-110;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 50%, transparent),
+                0 6px 20px -8px var(--primary-glow);
+  }
+  .btn-ghost {
+    @apply btn bg-surfaceAlt text-text hover:bg-border border border-border;
+  }
+  .btn-danger {
+    @apply btn bg-transparent text-danger;
+    border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  }
+  .btn-danger:hover {
+    background: color-mix(in srgb, var(--danger) 10%, transparent);
+  }
+  .input {
+    @apply w-full bg-bg border border-border rounded-lg px-3 py-2.5 text-sm
+           text-text placeholder:text-textMuted
+           focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-border
+           bg-surfaceAlt px-2.5 py-1 text-xs text-textMuted;
+  }
+  .label {
+    @apply block text-xs font-medium uppercase tracking-wide text-textMuted mb-1.5;
+  }
+  .stat {
+    @apply panel p-4 flex flex-col gap-1;
+  }
+  .stat-value {
+    @apply text-2xl font-display font-semibold text-text tracking-tight;
+  }
+  .stat-label {
+    @apply text-xs uppercase tracking-wide text-textMuted;
+  }
+}
+
+/* Active service / nav glow */
+.glow-active {
+  box-shadow: 0 0 0 1px var(--primary), 0 0 18px -4px var(--primary-glow);
+  border-color: var(--primary) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: var(--border); border-radius: 8px;
+  border: 2px solid var(--bg);
+}
