@@ -9,7 +9,10 @@ import { TABS, type TabName } from "./tabs";
 export { TABS };
 export type { TabName };
 
-const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
+const SCOPES = [
+  "https://www.googleapis.com/auth/spreadsheets",
+  "https://www.googleapis.com/auth/drive",
+];
 
 
 let _client: sheets_v4.Sheets | null = null;
@@ -123,4 +126,56 @@ export async function updateRowById(
     requestBody: { values: [row] },
   });
   return true;
+}
+
+/** Delete a row by id (clears its contents — simple + safe for this app). */
+export async function deleteRowById(tab: TabName, id: string): Promise<boolean> {
+  const sheets = sheetsClient();
+  const rowIndex = await findRowIndexById(tab, id);
+  if (rowIndex === -1) return false;
+  // Get the sheetId (gid) for this tab to do a real row delete.
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: spreadsheetId() });
+  const sheet = (meta.data.sheets ?? []).find((s) => s.properties?.title === tab);
+  const gid = sheet?.properties?.sheetId;
+  if (gid == null) return false;
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: spreadsheetId(),
+    requestBody: {
+      requests: [
+        {
+          deleteDimension: {
+            range: { sheetId: gid, dimension: "ROWS", startIndex: rowIndex - 1, endIndex: rowIndex },
+          },
+        },
+      ],
+    },
+  });
+  return true;
+}
+
+/** Settings tab: set a key's value, updating if present else appending. */
+export async function setKeyValue(tab: TabName, key: string, value: string): Promise<void> {
+  const sheets = sheetsClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: spreadsheetId(),
+    range: `${tab}!A1:B10000`,
+  });
+  const rows = res.data.values ?? [];
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i]?.[0]).trim() === key) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: spreadsheetId(),
+        range: `${tab}!A${i + 1}`,
+        valueInputOption: "RAW",
+        requestBody: { values: [[key, value]] },
+      });
+      return;
+    }
+  }
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: spreadsheetId(),
+    range: `${tab}!A1`,
+    valueInputOption: "RAW",
+    requestBody: { values: [[key, value]] },
+  });
 }

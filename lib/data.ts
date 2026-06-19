@@ -1,19 +1,13 @@
 // ============================================================
 //  DATA MAPPERS + BUSINESS LOGIC
 //  Converts raw sheet rows <-> typed domain objects, and holds
-//  pure functions for commission / P&L math (easy to unit test).
+//  pure functions for commission / inventory / payroll / P&L.
 // ============================================================
 import { branding } from "@/config/branding";
 import type {
-  Service,
-  Attendant,
-  Sale,
-  SaleLine,
-  InventoryItem,
-  Booking,
-  AttendanceRecord,
-  Expense,
-  PnL,
+  User, Service, Recipe, Attendant, Sale, SaleLine,
+  InventoryItem, StockMovement, InventoryStatus,
+  Booking, AttendanceRecord, Expense, PayrollSettings, PnL,
 } from "./types";
 
 const num = (v: unknown, d = 0) => {
@@ -22,10 +16,29 @@ const num = (v: unknown, d = 0) => {
 };
 const bool = (v: unknown) => String(v).toLowerCase() === "true" || v === "1";
 const list = (v: unknown) =>
-  String(v ?? "")
-    .split("|")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  String(v ?? "").split("|").map((s) => s.trim()).filter(Boolean);
+
+export function round2(n: number): number {
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+export function money(n: number): string {
+  return `${branding.currencySymbol}${n.toLocaleString(branding.locale, {
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
+  })}`;
+}
+
+// ---------- Users ----------
+export function toUser(r: Record<string, string>): User {
+  return {
+    id: r.id,
+    username: r.username,
+    passwordHash: r.passwordHash || "",
+    role: (r.role as User["role"]) || "cashier",
+    attendantId: r.attendantId || "",
+    displayName: r.displayName || r.username,
+    active: r.active === "" ? true : bool(r.active),
+  };
+}
 
 // ---------- Services ----------
 export function toService(r: Record<string, string>): Service {
@@ -40,6 +53,16 @@ export function toService(r: Record<string, string>): Service {
   };
 }
 
+// ---------- Recipes ----------
+export function toRecipe(r: Record<string, string>): Recipe {
+  return {
+    id: r.id,
+    serviceId: r.serviceId,
+    itemId: r.itemId,
+    qtyPerService: num(r.qtyPerService),
+  };
+}
+
 // ---------- Attendants ----------
 export function toAttendant(r: Record<string, string>): Attendant {
   return {
@@ -48,21 +71,37 @@ export function toAttendant(r: Record<string, string>): Attendant {
     role: r.role || "Attendant",
     baseRate: num(r.baseRate),
     payType: (r.payType as "daily" | "hourly") || "daily",
+    otRatePerHour: num(r.otRatePerHour),
     active: r.active === "" ? true : bool(r.active),
     pin: r.pin || undefined,
+    phone: r.phone || "",
+    email: r.email || "",
+    address: r.address || "",
+    birthdate: r.birthdate || "",
+    emergencyContact: r.emergencyContact || "",
+    bankName: r.bankName || "",
+    bankAccountName: r.bankAccountName || "",
+    bankAccountNumber: r.bankAccountNumber || "",
+    documentsUrl: r.documentsUrl || "",
+    notes: r.notes || "",
+  };
+}
+
+export function attendantToRow(a: Attendant): Record<string, string | number> {
+  return {
+    id: a.id, name: a.name, role: a.role, baseRate: a.baseRate,
+    payType: a.payType, otRatePerHour: a.otRatePerHour, active: String(a.active),
+    pin: a.pin || "", phone: a.phone, email: a.email, address: a.address,
+    birthdate: a.birthdate, emergencyContact: a.emergencyContact,
+    bankName: a.bankName, bankAccountName: a.bankAccountName,
+    bankAccountNumber: a.bankAccountNumber, documentsUrl: a.documentsUrl, notes: a.notes,
   };
 }
 
 // ---------- Sales ----------
-// Sale lines are stored JSON-encoded in a single "lines" cell to keep
-// the sheet flat while preserving structure.
 export function toSale(r: Record<string, string>): Sale {
   let lines: SaleLine[] = [];
-  try {
-    lines = JSON.parse(r.lines || "[]");
-  } catch {
-    lines = [];
-  }
+  try { lines = JSON.parse(r.lines || "[]"); } catch { lines = []; }
   return {
     id: r.id,
     datetime: r.datetime,
@@ -75,26 +114,25 @@ export function toSale(r: Record<string, string>): Sale {
     paymentMethod: r.paymentMethod || "Cash",
     commissionTotal: num(r.commissionTotal),
     customer: r.customer || undefined,
+    customerPhone: r.customerPhone || undefined,
+    customerEmail: r.customerEmail || undefined,
     vehicle: r.vehicle || undefined,
+    carPhotoUrl: r.carPhotoUrl || undefined,
+    signatureUrl: r.signatureUrl || undefined,
+    cashierId: r.cashierId || undefined,
     status: (r.status as "paid" | "void") || "paid",
   };
 }
 
 export function saleToRow(s: Sale): Record<string, string | number> {
   return {
-    id: s.id,
-    datetime: s.datetime,
-    lines: JSON.stringify(s.lines),
-    subtotal: s.subtotal,
-    tax: s.tax,
-    tip: s.tip,
-    tipAttendantId: s.tipAttendantId,
-    total: s.total,
-    paymentMethod: s.paymentMethod,
-    commissionTotal: s.commissionTotal,
-    customer: s.customer || "",
-    vehicle: s.vehicle || "",
-    status: s.status,
+    id: s.id, datetime: s.datetime, lines: JSON.stringify(s.lines),
+    subtotal: s.subtotal, tax: s.tax, tip: s.tip, tipAttendantId: s.tipAttendantId,
+    total: s.total, paymentMethod: s.paymentMethod, commissionTotal: s.commissionTotal,
+    customer: s.customer || "", customerPhone: s.customerPhone || "",
+    customerEmail: s.customerEmail || "", vehicle: s.vehicle || "",
+    carPhotoUrl: s.carPhotoUrl || "", signatureUrl: s.signatureUrl || "",
+    cashierId: s.cashierId || "", status: s.status,
   };
 }
 
@@ -105,90 +143,89 @@ export function toInventory(r: Record<string, string>): InventoryItem {
     category: r.category || "Uncategorized",
     subcategory: r.subcategory || "",
     name: r.name,
-    qty: num(r.qty),
+    unit: r.unit || "pcs",
     unitCost: num(r.unitCost),
     reorderLevel: num(r.reorderLevel),
+  };
+}
+
+export function toMovement(r: Record<string, string>): StockMovement {
+  return {
+    id: r.id,
+    datetime: r.datetime,
+    itemId: r.itemId,
+    type: (r.type as StockMovement["type"]) || "ADJUST",
+    qty: num(r.qty),
+    unitCost: num(r.unitCost),
+    reason: r.reason || "",
+    reference: r.reference || "",
+    receiptUrl: r.receiptUrl || "",
   };
 }
 
 // ---------- Bookings ----------
 export function toBooking(r: Record<string, string>): Booking {
   return {
-    id: r.id,
-    datetime: r.datetime,
-    customer: r.customer,
-    phone: r.phone || "",
-    vehicle: r.vehicle || "",
-    serviceIds: list(r.serviceIds),
+    id: r.id, datetime: r.datetime, customer: r.customer, phone: r.phone || "",
+    vehicle: r.vehicle || "", serviceIds: list(r.serviceIds),
     attendantId: r.attendantId || "",
-    status: (r.status as Booking["status"]) || "booked",
-    notes: r.notes || "",
+    status: (r.status as Booking["status"]) || "booked", notes: r.notes || "",
   };
 }
-
 export function bookingToRow(b: Booking): Record<string, string | number> {
   return {
-    id: b.id,
-    datetime: b.datetime,
-    customer: b.customer,
-    phone: b.phone,
-    vehicle: b.vehicle,
-    serviceIds: b.serviceIds.join("|"),
-    attendantId: b.attendantId,
-    status: b.status,
-    notes: b.notes || "",
+    id: b.id, datetime: b.datetime, customer: b.customer, phone: b.phone,
+    vehicle: b.vehicle, serviceIds: b.serviceIds.join("|"),
+    attendantId: b.attendantId, status: b.status, notes: b.notes || "",
   };
 }
 
 // ---------- Attendance ----------
 export function toAttendance(r: Record<string, string>): AttendanceRecord {
   return {
-    id: r.id,
-    attendantId: r.attendantId,
-    date: r.date,
-    clockIn: r.clockIn || "",
-    clockOut: r.clockOut || "",
-    hours: num(r.hours),
+    id: r.id, attendantId: r.attendantId, date: r.date,
+    clockIn: r.clockIn || "", clockOut: r.clockOut || "",
+    hours: num(r.hours), otHours: num(r.otHours), note: r.note || "",
   };
 }
 
 // ---------- Expenses ----------
 export function toExpense(r: Record<string, string>): Expense {
   return {
-    id: r.id,
-    date: r.date,
-    category: r.category || "Other",
-    amount: num(r.amount),
-    note: r.note || "",
+    id: r.id, date: r.date, kind: (r.kind as Expense["kind"]) || "additional",
+    category: r.category || "Other", amount: num(r.amount),
+    note: r.note || "", receiptUrl: r.receiptUrl || "",
+  };
+}
+
+// ---------- Settings ----------
+export function toPayrollSettings(rows: Record<string, string>[]): PayrollSettings {
+  const map: Record<string, string> = {};
+  rows.forEach((r) => { if (r.key) map[r.key] = r.value; });
+  return {
+    defaultExpectedHours: num(map.defaultExpectedHours, 8),
+    defaultOtRatePerHour: num(map.defaultOtRatePerHour, 0),
+    maxOtHoursPerDay: num(map.maxOtHoursPerDay, 4),
   };
 }
 
 // ============================================================
-//  PURE BUSINESS CALCULATIONS
+//  COMMISSION
 // ============================================================
-
-/** Build sale lines with commission computed per service. */
 export function buildSaleLines(
   selected: { service: Service; attendantIds: string[] }[]
 ): SaleLine[] {
-  return selected.map(({ service, attendantIds }) => {
-    const commissionTotal = round2((service.price * service.commissionRate) / 100);
-    return {
-      serviceId: service.id,
-      serviceName: service.name,
-      price: service.price,
-      attendantIds,
-      commissionRate: service.commissionRate,
-      commissionTotal,
-    };
-  });
+  return selected.map(({ service, attendantIds }) => ({
+    serviceId: service.id,
+    serviceName: service.name,
+    price: service.price,
+    attendantIds,
+    commissionRate: service.commissionRate,
+    commissionTotal: round2((service.price * service.commissionRate) / 100),
+  }));
 }
 
-export function summarizeSale(
-  lines: SaleLine[],
-  tip: number,
-  taxRate = branding.taxRate
-) {
+export function summarizeSale(lines: SaleLine[], tip: number, taxRate = branding.taxRate) {
   const subtotal = round2(lines.reduce((s, l) => s + l.price, 0));
   const tax = round2((subtotal * taxRate) / 100);
   const commissionTotal = round2(lines.reduce((s, l) => s + l.commissionTotal, 0));
@@ -196,7 +233,6 @@ export function summarizeSale(
   return { subtotal, tax, commissionTotal, total };
 }
 
-/** Commission earned by a specific attendant across sales (split evenly per line). */
 export function attendantCommission(sales: Sale[], attendantId: string): number {
   let total = 0;
   for (const sale of sales) {
@@ -210,15 +246,12 @@ export function attendantCommission(sales: Sale[], attendantId: string): number 
   return round2(total);
 }
 
-/** Tips earned by an attendant (direct tips + even split of unassigned tips). */
 export function attendantTips(sales: Sale[], attendantId: string): number {
   let total = 0;
   for (const sale of sales) {
     if (sale.status !== "paid" || sale.tip <= 0) continue;
-    if (sale.tipAttendantId === attendantId) {
-      total += sale.tip;
-    } else if (!sale.tipAttendantId) {
-      // unassigned tip -> split among all attendants on the sale
+    if (sale.tipAttendantId === attendantId) total += sale.tip;
+    else if (!sale.tipAttendantId) {
       const ids = new Set(sale.lines.flatMap((l) => l.attendantIds));
       if (ids.has(attendantId) && ids.size > 0) total += sale.tip / ids.size;
     }
@@ -226,11 +259,136 @@ export function attendantTips(sales: Sale[], attendantId: string): number {
   return round2(total);
 }
 
-export function computePnL(
+// ============================================================
+//  INVENTORY ENGINE
+//  On-hand = sum of signed movement qty. Avg daily use from
+//  recent OUT movements. Days-left projection for reordering.
+// ============================================================
+export function computeInventoryStatus(
+  items: InventoryItem[],
+  movements: StockMovement[],
+  windowDays = 30
+): InventoryStatus[] {
+  const now = Date.now();
+  const windowMs = windowDays * 86400000;
+
+  return items.map((item) => {
+    const mine = movements.filter((m) => m.itemId === item.id);
+    const onHand = round2(mine.reduce((s, m) => s + m.qty, 0));
+
+    // average daily usage from OUT movements in the window
+    const recentOut = mine.filter(
+      (m) => m.qty < 0 && now - new Date(m.datetime).getTime() <= windowMs
+    );
+    const usedInWindow = Math.abs(recentOut.reduce((s, m) => s + m.qty, 0));
+    const avgDailyUse = round2(usedInWindow / windowDays);
+    const daysLeft = avgDailyUse > 0 ? Math.floor(onHand / avgDailyUse) : null;
+
+    return {
+      item,
+      onHand,
+      value: round2(onHand * item.unitCost),
+      low: onHand <= item.reorderLevel,
+      avgDailyUse,
+      daysLeft,
+    };
+  });
+}
+
+/**
+ * Build OUT movements for the consumables used by a set of sold services.
+ * Each service performed consumes its recipe amounts once.
+ */
+export function buildConsumptionMovements(
+  soldServiceIds: string[],
+  recipes: Recipe[],
+  items: InventoryItem[],
+  saleId: string,
+  mkId: () => string,
+  serviceNameById: (id: string) => string
+): Omit<StockMovement, "datetime">[] {
+  const movements: Omit<StockMovement, "datetime">[] = [];
+  for (const svcId of soldServiceIds) {
+    const svcRecipes = recipes.filter((r) => r.serviceId === svcId);
+    for (const rec of svcRecipes) {
+      const item = items.find((i) => i.id === rec.itemId);
+      if (!item || rec.qtyPerService <= 0) continue;
+      movements.push({
+        id: mkId(),
+        itemId: rec.itemId,
+        type: "OUT",
+        qty: -Math.abs(rec.qtyPerService),
+        unitCost: item.unitCost,
+        reason: `Auto: ${serviceNameById(svcId)}`,
+        reference: saleId,
+        receiptUrl: "",
+      });
+    }
+  }
+  return movements;
+}
+
+/** Total cost of goods consumed (from OUT movements) within a date range. */
+export function cogsFromMovements(movements: StockMovement[], from: string, to: string): number {
+  const cost = movements
+    .filter((m) => m.qty < 0 && m.datetime.slice(0, 10) >= from && m.datetime.slice(0, 10) <= to)
+    .reduce((s, m) => s + Math.abs(m.qty) * m.unitCost, 0);
+  return round2(cost);
+}
+
+// ============================================================
+//  PAYROLL (with OT)
+// ============================================================
+export interface PayBreakdown {
+  daysPresent: number;
+  regularHours: number;
+  otHours: number;
+  basePay: number;
+  otPay: number;
+  commission: number;
+  tips: number;
+  gross: number;
+}
+
+export function computePay(
+  attendant: Attendant,
+  records: AttendanceRecord[],
   sales: Sale[],
-  expenses: Expense[],
-  cogs = 0
-): PnL {
+  settings: PayrollSettings
+): PayBreakdown {
+  const mine = records.filter((r) => r.attendantId === attendant.id);
+  const daysPresent = new Set(mine.map((r) => r.date)).size;
+  const regularHours = round2(mine.reduce((s, r) => s + r.hours, 0));
+  const otHours = round2(mine.reduce((s, r) => s + r.otHours, 0));
+
+  const basePay =
+    attendant.payType === "hourly"
+      ? round2(regularHours * attendant.baseRate)
+      : round2(daysPresent * attendant.baseRate);
+
+  const otRate = attendant.otRatePerHour > 0 ? attendant.otRatePerHour : settings.defaultOtRatePerHour;
+  const otPay = round2(otHours * otRate);
+
+  const commission = attendantCommission(sales, attendant.id);
+  const tips = attendantTips(sales, attendant.id);
+  const gross = round2(basePay + otPay + commission + tips);
+
+  return { daysPresent, regularHours, otHours, basePay, otPay, commission, tips, gross };
+}
+
+/** Split worked hours into regular vs OT given expected hours + daily OT cap. */
+export function splitHours(totalHours: number, settings: PayrollSettings) {
+  const expected = settings.defaultExpectedHours;
+  const regular = Math.min(totalHours, expected);
+  const otRaw = Math.max(0, totalHours - expected);
+  const ot = Math.min(otRaw, settings.maxOtHoursPerDay);
+  return { regular: round2(regular), ot: round2(ot) };
+}
+
+// ============================================================
+//  P&L
+// ============================================================
+export function computePnL(sales: Sale[], expenses: Expense[], cogs = 0): PnL {
   const paid = sales.filter((s) => s.status === "paid");
   const revenue = round2(paid.reduce((s, x) => s + x.subtotal + x.tax, 0));
   const tips = round2(paid.reduce((s, x) => s + x.tip, 0));
@@ -238,24 +396,5 @@ export function computePnL(
   const expenseTotal = round2(expenses.reduce((s, x) => s + x.amount, 0));
   const grossProfit = round2(revenue - cogs);
   const netProfit = round2(grossProfit - commissionsPaid - expenseTotal);
-  return {
-    revenue,
-    tips,
-    commissionsPaid,
-    cogs: round2(cogs),
-    expenses: expenseTotal,
-    grossProfit,
-    netProfit,
-  };
-}
-
-export function round2(n: number): number {
-  return Math.round((n + Number.EPSILON) * 100) / 100;
-}
-
-export function money(n: number): string {
-  return `${branding.currencySymbol}${n.toLocaleString(branding.locale, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+  return { revenue, tips, commissionsPaid, cogs: round2(cogs), expenses: expenseTotal, grossProfit, netProfit };
 }
