@@ -37,11 +37,15 @@ export function QueueManager({ cashierId }: { cashierId: string }) {
   // initial load syncs bookings → queue; then gentle auto-refresh
   useEffect(() => { load(true); }, [load]);
   useEffect(() => {
-    const t = setInterval(() => load(false), 8000);
+    const t = setInterval(() => load(false), 2000);
     return () => clearInterval(t);
   }, [load]);
 
   const live = useMemo(() => liveQueue(queue), [queue]);
+  const needsAttention = useMemo(
+    () => live.filter((e) => e.status === "waiting" && e.assignedAttendantIds.length === 0 && e.declinedAttendantIds.length > 0),
+    [live]
+  );
   const arriving = useMemo(() => arrivingSoon(queue), [queue]);
   const loads = useMemo(() => attendantTurnOrder(attendantLoads(attendants, queue, today())), [attendants, queue]);
   const serviceName = useCallback((id: string) => services.find((s) => s.id === id)?.name ?? id, [services]);
@@ -70,6 +74,12 @@ export function QueueManager({ cashierId }: { cashierId: string }) {
   return (
     <div className="space-y-5">
       {err && <Banner kind="error">{err}</Banner>}
+
+      {needsAttention.length > 0 && (
+        <Banner kind="error">
+          {needsAttention.length} job(s) need a manual assignment (no attendant available or it was declined). Use the <b>Assign</b> button on those entries.
+        </Banner>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-4">
         <Stat label="Waiting" value={String(waitingCount)} accent={waitingCount > 0} />

@@ -162,6 +162,9 @@ export interface QueueEntry {
   serviceIds: string[];
   assignedAttendantIds: string[]; // who must work this job
   acceptedAttendantIds: string[]; // who has accepted so far
+  declinedAttendantIds: string[]; // who declined/passed (flag for cashier)
+  preferredAttendantId: string;   // soft request from self-queue (optional)
+  autoAssigned: boolean;          // was the current assignment automatic?
   status: QueueStatus;
   priority: number;           // lower = higher priority (scheduled < walk-in)
   saleId: string;             // linked sale once paid/checked out

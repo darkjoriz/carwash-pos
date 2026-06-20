@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { branding } from "@/config/branding";
-import { api, uid } from "@/lib/client";
+import { api, uid, queueApi } from "@/lib/client";
 import { TABS } from "@/lib/tabs";
 import { computePay, splitHours, money } from "@/lib/data";
 import type { Attendant, AttendanceRecord, Sale, Booking, PayrollSettings } from "@/lib/types";
@@ -114,6 +114,8 @@ function Dashboard({ attendant, records, sales, bookings, settings, onChange, ca
         id: uid("A-"), attendantId: attendant.id, date: today,
         clockIn: new Date().toISOString(), clockOut: "", hours: 0, otHours: 0, note: "",
       });
+      // Newly available → let the system assign any waiting jobs.
+      try { await queueApi.action("autoassign_sweep"); } catch { /* non-fatal */ }
       onChange();
     } catch (e) { setErr(e instanceof Error ? e.message : "Failed"); }
     finally { setBusy(false); }
@@ -121,6 +123,19 @@ function Dashboard({ attendant, records, sales, bookings, settings, onChange, ca
 
   async function clockOut() {
     if (!openToday) return;
+    // Block clock-out if they still have an active (assigned/in-progress) job.
+    try {
+      const q = (await queueApi.list()).map((r) => r);
+      const hasActive = q.some((row) => {
+        const assigned = String(row.assignedAttendantIds || "").split("|").includes(attendant.id);
+        const status = String(row.status || "");
+        return assigned && (status === "assigned" || status === "in_progress");
+      });
+      if (hasActive) {
+        setErr("You still have an active job. Complete it first, or ask the cashier to reassign it before clocking out.");
+        return;
+      }
+    } catch { /* if the check fails, fall through and allow clock-out */ }
     setBusy(true); setErr("");
     try {
       const out = new Date();

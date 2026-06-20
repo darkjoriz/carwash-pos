@@ -423,6 +423,9 @@ export function toQueueEntry(r: Record<string, string>): QueueEntry {
     serviceIds: list(r.serviceIds),
     assignedAttendantIds: list(r.assignedAttendantIds),
     acceptedAttendantIds: list(r.acceptedAttendantIds),
+    declinedAttendantIds: list(r.declinedAttendantIds),
+    preferredAttendantId: r.preferredAttendantId || "",
+    autoAssigned: bool(r.autoAssigned),
     status: (r.status as QueueStatus) || "waiting",
     priority: r.priority === "" || r.priority == null ? PRIORITY_WALKIN : num(r.priority),
     saleId: r.saleId || "",
@@ -447,6 +450,9 @@ export function queueEntryToRow(q: QueueEntry): Record<string, string | number> 
     serviceIds: q.serviceIds.join("|"),
     assignedAttendantIds: q.assignedAttendantIds.join("|"),
     acceptedAttendantIds: q.acceptedAttendantIds.join("|"),
+    declinedAttendantIds: q.declinedAttendantIds.join("|"),
+    preferredAttendantId: q.preferredAttendantId,
+    autoAssigned: String(q.autoAssigned),
     status: q.status,
     priority: q.priority,
     saleId: q.saleId,
@@ -581,4 +587,110 @@ export function queueWaitMinutes(entry: QueueEntry, now = Date.now()): number {
   const start = entry.checkedInAt || entry.createdAt;
   if (!start) return 0;
   return Math.max(0, Math.round((now - new Date(start).getTime()) / 60000));
+}
+
+// ============================================================
+//  CLOCK-IN AWARE AUTO-ASSIGNMENT
+//  Only clocked-in attendants are in rotation. First round uses
+//  clock-in order; afterwards load-balanced. Preferred attendant
+//  is honored only if free.
+// ============================================================
+
+export interface ClockState {
+  attendantId: string;
+  clockInISO: string;   // most recent clock-in for the day
+  clockedIn: boolean;   // clocked in and not yet out
+}
+
+// Derive who is currently clocked in (today) and their clock-in time.
+// An attendance row with clockIn and no clockOut = currently clocked in.
+export function clockStates(records: AttendanceRecord[], day: string): ClockState[] {
+  const todays = records.filter((r) => r.date === day && r.clockIn);
+  const byAtt: Record<string, AttendanceRecord[]> = {};
+  for (const r of todays) (byAtt[r.attendantId] ||= []).push(r);
+  const out: ClockState[] = [];
+  for (const [attendantId, rows] of Object.entries(byAtt)) {
+    // sort by clockIn; "open" row (no clockOut) means currently in
+    rows.sort((a, b) => a.clockIn.localeCompare(b.clockIn));
+    const open = rows.find((r) => r.clockIn && !r.clockOut);
+    out.push({
+      attendantId,
+      clockInISO: rows[0].clockIn,
+      clockedIn: !!open,
+    });
+  }
+  return out;
+}
+
+export function isClockedIn(records: AttendanceRecord[], attendantId: string, day: string): boolean {
+  return clockStates(records, day).some((c) => c.attendantId === attendantId && c.clockedIn);
+}
+
+// Pick the attendant a new job should auto-assign to.
+//  - Only clocked-in + currently free attendants are eligible.
+//  - If a preferred attendant is given and they're eligible, use them.
+//  - First round (attendant has 0 jobs today): order by clock-in time.
+//  - Otherwise: load-balanced (fewest active, fewest today, idle longest).
+//  - Skip attendants who already declined this entry.
+export function pickAutoAssignee(
+  attendants: Attendant[],
+  entries: QueueEntry[],
+  records: AttendanceRecord[],
+  day: string,
+  opts: { preferredAttendantId?: string; excludeIds?: string[] } = {}
+): Attendant | null {
+  const clocks = clockStates(records, day);
+  const clockedInIds = new Set(clocks.filter((c) => c.clockedIn).map((c) => c.attendantId));
+  const clockInTime: Record<string, string> = {};
+  clocks.forEach((c) => { clockInTime[c.attendantId] = c.clockInISO; });
+
+  const busy = busyAttendantIds(entries);
+  const exclude = new Set(opts.excludeIds || []);
+
+  const eligible = attendants.filter((a) =>
+    a.active && clockedInIds.has(a.id) && !busy.has(a.id) && !exclude.has(a.id)
+  );
+  if (eligible.length === 0) return null;
+
+  // Preferred attendant wins if eligible.
+  if (opts.preferredAttendantId) {
+    const pref = eligible.find((a) => a.id === opts.preferredAttendantId);
+    if (pref) return pref;
+  }
+
+  const jobsToday = (id: string) =>
+    entries.filter((e) => e.assignedAttendantIds.includes(id) && (e.completedAt || "").slice(0, 10) === day).length;
+  const activeJobs = (id: string) =>
+    entries.filter((e) => e.assignedAttendantIds.includes(id) && (e.status === "assigned" || e.status === "in_progress")).length;
+
+  const sorted = [...eligible].sort((a, b) => {
+    const aTotal = jobsToday(a.id) + activeJobs(a.id);
+    const bTotal = jobsToday(b.id) + activeJobs(b.id);
+    // First round: nobody has any jobs yet → both totals 0 → clock-in order.
+    if (aTotal === 0 && bTotal === 0) {
+      return (clockInTime[a.id] || "").localeCompare(clockInTime[b.id] || "");
+    }
+    // Otherwise load-balance by total jobs, then clock-in as tiebreaker.
+    if (aTotal !== bTotal) return aTotal - bTotal;
+    return (clockInTime[a.id] || "").localeCompare(clockInTime[b.id] || "");
+  });
+
+  return sorted[0] || null;
+}
+
+// Sum a single attendant's commission share for a specific day (completed work).
+export function attendantCommissionForDay(
+  sales: Sale[], attendantId: string, day: string
+): number {
+  let total = 0;
+  for (const sale of sales) {
+    if (sale.status !== "paid") continue;
+    if (sale.datetime.slice(0, 10) !== day) continue;
+    for (const line of sale.lines) {
+      if (line.attendantIds.includes(attendantId)) {
+        total += line.commissionTotal / line.attendantIds.length;
+      }
+    }
+  }
+  return round2(total);
 }
