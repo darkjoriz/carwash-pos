@@ -8,6 +8,7 @@ import type {
   User, Service, Recipe, Attendant, Sale, SaleLine,
   InventoryItem, StockMovement, InventoryStatus,
   Booking, AttendanceRecord, Expense, PayrollSettings, PnL,
+  QueueEntry, QueueStatus, QueueSource,
 } from "./types";
 
 const num = (v: unknown, d = 0) => {
@@ -397,4 +398,187 @@ export function computePnL(sales: Sale[], expenses: Expense[], cogs = 0): PnL {
   const grossProfit = round2(revenue - cogs);
   const netProfit = round2(grossProfit - commissionsPaid - expenseTotal);
   return { revenue, tips, commissionsPaid, cogs: round2(cogs), expenses: expenseTotal, grossProfit, netProfit };
+}
+
+// ============================================================
+//  QUEUE — mappers + engine
+//  Priority sorting (scheduled over walk-in), load-balanced
+//  attendant suggestion, free/busy detection, accept gating.
+// ============================================================
+
+const PRIORITY_SCHEDULED = 0;
+const PRIORITY_WALKIN = 1;
+
+export function toQueueEntry(r: Record<string, string>): QueueEntry {
+  return {
+    id: r.id,
+    createdAt: r.createdAt || "",
+    source: (r.source as QueueEntry["source"]) || "walk_in",
+    bookingId: r.bookingId || "",
+    scheduledTime: r.scheduledTime || "",
+    checkedInAt: r.checkedInAt || "",
+    customer: r.customer || "",
+    phone: r.phone || "",
+    vehicle: r.vehicle || "",
+    serviceIds: list(r.serviceIds),
+    assignedAttendantIds: list(r.assignedAttendantIds),
+    acceptedAttendantIds: list(r.acceptedAttendantIds),
+    status: (r.status as QueueStatus) || "waiting",
+    priority: r.priority === "" || r.priority == null ? PRIORITY_WALKIN : num(r.priority),
+    saleId: r.saleId || "",
+    paid: bool(r.paid),
+    startedAt: r.startedAt || "",
+    completedAt: r.completedAt || "",
+    notes: r.notes || "",
+  };
+}
+
+export function queueEntryToRow(q: QueueEntry): Record<string, string | number> {
+  return {
+    id: q.id,
+    createdAt: q.createdAt,
+    source: q.source,
+    bookingId: q.bookingId,
+    scheduledTime: q.scheduledTime,
+    checkedInAt: q.checkedInAt,
+    customer: q.customer,
+    phone: q.phone,
+    vehicle: q.vehicle,
+    serviceIds: q.serviceIds.join("|"),
+    assignedAttendantIds: q.assignedAttendantIds.join("|"),
+    acceptedAttendantIds: q.acceptedAttendantIds.join("|"),
+    status: q.status,
+    priority: q.priority,
+    saleId: q.saleId,
+    paid: String(q.paid),
+    startedAt: q.startedAt,
+    completedAt: q.completedAt,
+    notes: q.notes,
+  };
+}
+
+export function defaultPriority(source: QueueSource): number {
+  return source === "scheduled" ? PRIORITY_SCHEDULED : PRIORITY_WALKIN;
+}
+
+// Entries that are actively in the live queue (excludes arriving/terminal).
+export function liveQueue(entries: QueueEntry[]): QueueEntry[] {
+  const active = entries.filter((e) =>
+    e.status === "waiting" || e.status === "assigned" || e.status === "in_progress"
+  );
+  // Sort: priority asc (scheduled first), then check-in/created time asc.
+  return active.sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority - b.priority;
+    const at = a.checkedInAt || a.createdAt;
+    const bt = b.checkedInAt || b.createdAt;
+    return at.localeCompare(bt);
+  });
+}
+
+// Scheduled bookings not yet checked in (the "arriving soon" staging list).
+export function arrivingSoon(entries: QueueEntry[]): QueueEntry[] {
+  return entries
+    .filter((e) => e.status === "arriving")
+    .sort((a, b) => (a.scheduledTime || "").localeCompare(b.scheduledTime || ""));
+}
+
+// An attendant is BUSY if they're an assigned member of any entry that is
+// assigned or in_progress (one active service at a time).
+export function busyAttendantIds(entries: QueueEntry[]): Set<string> {
+  const busy = new Set<string>();
+  for (const e of entries) {
+    if (e.status === "assigned" || e.status === "in_progress") {
+      e.assignedAttendantIds.forEach((id) => busy.add(id));
+    }
+  }
+  return busy;
+}
+
+export function isAttendantBusy(entries: QueueEntry[], attendantId: string): boolean {
+  return busyAttendantIds(entries).has(attendantId);
+}
+
+// Count of jobs done today per attendant (for load balancing / display).
+export function jobsHandledToday(entries: QueueEntry[], attendantId: string, day: string): number {
+  return entries.filter(
+    (e) =>
+      e.assignedAttendantIds.includes(attendantId) &&
+      (e.completedAt || "").slice(0, 10) === day
+  ).length;
+}
+
+export interface AttendantLoad {
+  attendant: Attendant;
+  busy: boolean;
+  activeJobs: number;
+  jobsToday: number;
+  lastFreedAt: string; // last completedAt; "" if never → idle longest
+}
+
+// Build a load snapshot used for suggestions and the turn-order display.
+export function attendantLoads(
+  attendants: Attendant[],
+  entries: QueueEntry[],
+  day: string
+): AttendantLoad[] {
+  const busy = busyAttendantIds(entries);
+  return attendants
+    .filter((a) => a.active)
+    .map((a) => {
+      const mine = entries.filter((e) => e.assignedAttendantIds.includes(a.id));
+      const completed = mine
+        .filter((e) => e.completedAt)
+        .map((e) => e.completedAt)
+        .sort();
+      return {
+        attendant: a,
+        busy: busy.has(a.id),
+        activeJobs: mine.filter((e) => e.status === "assigned" || e.status === "in_progress").length,
+        jobsToday: mine.filter((e) => (e.completedAt || "").slice(0, 10) === day).length,
+        lastFreedAt: completed.length ? completed[completed.length - 1] : "",
+      };
+    });
+}
+
+// Turn order: free attendants first, ordered by fewest active jobs, then
+// fewest jobs today, then idle longest (oldest lastFreedAt first).
+export function attendantTurnOrder(loads: AttendantLoad[]): AttendantLoad[] {
+  return [...loads].sort((a, b) => {
+    if (a.busy !== b.busy) return a.busy ? 1 : -1;
+    if (a.activeJobs !== b.activeJobs) return a.activeJobs - b.activeJobs;
+    if (a.jobsToday !== b.jobsToday) return a.jobsToday - b.jobsToday;
+    return (a.lastFreedAt || "").localeCompare(b.lastFreedAt || "");
+  });
+}
+
+// Who should be suggested the next waiting job (top free attendant).
+export function suggestNextAttendant(loads: AttendantLoad[]): Attendant | null {
+  const order = attendantTurnOrder(loads).filter((l) => !l.busy);
+  return order.length ? order[0].attendant : null;
+}
+
+// Can this attendant accept this entry? Only if not busy elsewhere and they
+// are an assigned member who hasn't yet accepted.
+export function canAccept(entries: QueueEntry[], entry: QueueEntry, attendantId: string): boolean {
+  if (entry.status !== "waiting" && entry.status !== "assigned") return false;
+  if (!entry.assignedAttendantIds.includes(attendantId)) return false;
+  if (entry.acceptedAttendantIds.includes(attendantId)) return false;
+  // busy check excluding THIS entry (in case they're assigned here already)
+  const others = entries.filter((e) => e.id !== entry.id);
+  return !isAttendantBusy(others, attendantId);
+}
+
+// After an accept, decide the resulting status: in_progress only when all
+// assigned attendants have accepted.
+export function statusAfterAccept(entry: QueueEntry): QueueStatus {
+  const allAccepted =
+    entry.assignedAttendantIds.length > 0 &&
+    entry.assignedAttendantIds.every((id) => entry.acceptedAttendantIds.includes(id));
+  return allAccepted ? "in_progress" : "assigned";
+}
+
+export function queueWaitMinutes(entry: QueueEntry, now = Date.now()): number {
+  const start = entry.checkedInAt || entry.createdAt;
+  if (!start) return 0;
+  return Math.max(0, Math.round((now - new Date(start).getTime()) / 60000));
 }

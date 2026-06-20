@@ -12,6 +12,7 @@ export const TABS = {
   inventory: "Inventory",
   movements: "StockMovements",
   bookings: "Bookings",
+  queue: "Queue",
   attendance: "Attendance",
   expenses: "Expenses",
   settings: "Settings",

@@ -20,6 +20,7 @@ const SCHEMA: Record<string, string[]> = {
   Inventory: ["id", "category", "subcategory", "name", "unit", "unitCost", "reorderLevel"],
   StockMovements: ["id", "datetime", "itemId", "type", "qty", "unitCost", "reason", "reference", "receiptUrl"],
   Bookings: ["id", "datetime", "customer", "phone", "vehicle", "serviceIds", "attendantId", "status", "notes"],
+  Queue: ["id", "createdAt", "source", "bookingId", "scheduledTime", "checkedInAt", "customer", "phone", "vehicle", "serviceIds", "assignedAttendantIds", "acceptedAttendantIds", "status", "priority", "saleId", "paid", "startedAt", "completedAt", "notes"],
   Attendance: ["id", "attendantId", "date", "clockIn", "clockOut", "hours", "otHours", "note"],
   Expenses: ["id", "date", "kind", "category", "amount", "note", "receiptUrl"],
   Settings: ["key", "value"],

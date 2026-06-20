@@ -2,12 +2,12 @@
 // Client helpers to talk to the API and map to typed objects.
 import {
   toUser, toService, toRecipe, toAttendant, toSale, toInventory,
-  toMovement, toBooking, toAttendance, toExpense, toPayrollSettings,
+  toMovement, toBooking, toAttendance, toExpense, toPayrollSettings, toQueueEntry,
 } from "@/lib/data";
 import { TABS } from "@/lib/tabs";
 import type {
   User, Service, Recipe, Attendant, Sale, InventoryItem,
-  StockMovement, Booking, AttendanceRecord, Expense, PayrollSettings,
+  StockMovement, Booking, AttendanceRecord, Expense, PayrollSettings, QueueEntry,
 } from "@/lib/types";
 
 async function getTab<T>(tab: string, map: (r: Record<string, string>) => T): Promise<T[]> {
@@ -33,6 +33,7 @@ export const api = {
   inventory: () => getTab<InventoryItem>(TABS.inventory, toInventory),
   movements: () => getTab<StockMovement>(TABS.movements, toMovement),
   bookings: () => getTab<Booking>(TABS.bookings, toBooking),
+  queue: () => getTab<QueueEntry>(TABS.queue, toQueueEntry),
   attendance: () => getTab<AttendanceRecord>(TABS.attendance, toAttendance),
   expenses: () => getTab<Expense>(TABS.expenses, toExpense),
   settings: async (): Promise<PayrollSettings> => toPayrollSettings(await getRows(TABS.settings)),
@@ -92,6 +93,29 @@ export const api = {
     const json = await res.json();
     if (!json.ok) throw new Error(json.error || "Upload failed");
     return json.link as string;
+  },
+};
+
+export const queueApi = {
+  list: async () => {
+    const res = await fetch("/api/queue", { cache: "no-store" });
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error || "Failed to load queue");
+    return json.data as Record<string, string>[];
+  },
+  action: async (action: string, payload: Record<string, unknown> = {}) => {
+    const res = await fetch("/api/queue", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, ...payload }),
+    });
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error || "Queue action failed");
+    return json;
+  },
+  remove: async (id: string) => {
+    const res = await fetch(`/api/queue?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error || "Delete failed");
   },
 };
 

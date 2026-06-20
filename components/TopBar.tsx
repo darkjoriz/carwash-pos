@@ -6,6 +6,7 @@ import { auth } from "@/lib/client";
 
 const ALL_TABS = [
   { href: "/pos", label: "POS", roles: ["admin", "cashier"] },
+  { href: "/queue", label: "Queue", roles: ["admin", "cashier"] },
   { href: "/admin", label: "Admin", roles: ["admin"] },
   { href: "/reports", label: "Reports", roles: ["cashier"] },
   { href: "/attendant", label: "My Dashboard", roles: ["attendant", "admin"] },

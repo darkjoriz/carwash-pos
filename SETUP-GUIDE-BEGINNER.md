@@ -1,5 +1,36 @@
 # Beginner Setup Guide — No Terminal, No Coding
 
+> ## 🔄 Updating from the first version? Read this box first.
+>
+> This version adds logins, inventory auto-deduction, payroll/OT, expenses,
+> HR profiles, and photo/signature/document uploads. To update your live app:
+>
+> 1. **Replace your files on GitHub** with the ones in this new zip (drag & drop,
+>    overwrite when asked, then Commit). Vercel will redeploy automatically.
+> 2. **Add one new environment variable in Vercel** → Project → Settings →
+>    Environment Variables:
+>    - `AUTH_SECRET` = any long random string (40+ characters). This signs login
+>      sessions. Keep it private. *(Without it, logins won't work.)*
+>    - *(Optional)* `DRIVE_FOLDER_ID` if you want uploads in a specific Drive folder.
+> 3. **Enable the Google Drive API** in your Google Cloud project (same place you
+>    enabled the Sheets API). Photos, signatures, and document uploads need it.
+>    Go to console.cloud.google.com → APIs & Services → Library → search
+>    "Google Drive API" → Enable.
+> 4. After it redeploys, open **`/setup`** on your site and click
+>    **Initialize my sheet** once more. This adds the new tabs (Users, Recipes,
+>    StockMovements, Settings, Queue, and the expanded columns). Your existing data stays.
+> 5. Go to **`/login`** and sign in. Default logins are created for you:
+>    - Admin — `admin` / `admin123`
+>    - Cashier — `cashier` / `cashier123`
+>    - Attendant — `marco` / `marco123`
+>    **Change these immediately** in the Admin → Users tab.
+>
+> A note on security: these logins are operational access control (good for daily
+> staff use), not bank-grade. Don't store anything highly sensitive, and pick a
+> strong `AUTH_SECRET`.
+
+---
+
 This guide gets your carwash app online using only your web browser. You will
 **not** install anything on your computer and you will **not** type any commands.
 

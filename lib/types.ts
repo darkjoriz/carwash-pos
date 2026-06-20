@@ -135,6 +135,42 @@ export interface Booking {
   notes?: string;
 }
 
+// ---------- Queue ----------
+// A live job in the shop queue. Fed by walk-ins (added directly) or by
+// scheduled bookings (which appear as "arriving" then are checked in).
+export type QueueStatus =
+  | "arriving"     // scheduled booking, not yet physically here
+  | "waiting"      // in the live queue, not yet accepted
+  | "assigned"     // attendant(s) suggested/assigned, awaiting all to accept
+  | "in_progress"  // accepted by all assigned attendants, work underway
+  | "done"         // completed (work finished)
+  | "no_show"      // scheduled customer didn't arrive
+  | "cancelled";
+
+export type QueueSource = "walk_in" | "scheduled";
+
+export interface QueueEntry {
+  id: string;
+  createdAt: string;          // when added to the system
+  source: QueueSource;
+  bookingId: string;          // link back to Bookings row if scheduled
+  scheduledTime: string;      // ISO; empty for pure walk-ins
+  checkedInAt: string;        // when cashier checked them in (entered live queue)
+  customer: string;
+  phone: string;
+  vehicle: string;
+  serviceIds: string[];
+  assignedAttendantIds: string[]; // who must work this job
+  acceptedAttendantIds: string[]; // who has accepted so far
+  status: QueueStatus;
+  priority: number;           // lower = higher priority (scheduled < walk-in)
+  saleId: string;             // linked sale once paid/checked out
+  paid: boolean;
+  startedAt: string;          // when work began (all accepted)
+  completedAt: string;
+  notes: string;
+}
+
 // ---------- Attendance ----------
 export interface AttendanceRecord {
   id: string;

@@ -133,8 +133,21 @@ export default function SetupPage() {
                 Done. Created {done.createdTabs.length} tab(s)
                 {done.seededTabs.length ? `, added samples to ${done.seededTabs.length}` : ""}.
               </Banner>
+              <div className="rounded-lg border border-border bg-bg p-4 text-sm">
+                <p className="mb-2 font-semibold text-text">Default logins (change these right away):</p>
+                <ul className="space-y-1 text-textMuted">
+                  <li>• Admin — username <span className="text-text">admin</span> / password <span className="text-text">admin123</span></li>
+                  <li>• Cashier — username <span className="text-text">cashier</span> / password <span className="text-text">cashier123</span></li>
+                  <li>• Attendant — username <span className="text-text">marco</span> / password <span className="text-text">marco123</span></li>
+                </ul>
+                <p className="mt-3 text-xs text-textMuted">
+                  Reminder: for photo, signature, and document uploads to work, make sure the
+                  <span className="text-text"> Google Drive API</span> is enabled in your Google Cloud project,
+                  and that <span className="text-text">AUTH_SECRET</span> is set in your environment variables.
+                </p>
+              </div>
               <div className="flex gap-2">
-                <Link href="/pos" className="btn-primary">Open the POS</Link>
+                <Link href="/login" className="btn-primary">Go to login</Link>
                 <Link href="/admin" className="btn-ghost">Open Admin</Link>
               </div>
             </div>
